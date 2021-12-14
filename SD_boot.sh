@@ -5,31 +5,31 @@ GREEN_START="\033[1;32m"
 YELOW_START="\033[1;33m"
 COLOR_END="\033[0m"
 
-function configure_mount_dir
+function set_mount_dir
 {
     BOOT_DIR=/mnt/BBB_boot
     ROOT_DIR=/mnt/BBB_root
-    # printf "BOOT_DIR=$BOOT_DIR\nROOT_DIR=$ROOT_DIR\n"
 }
 
-function configure_kernel
+function set_exports
 {
-    # Default for RPi 3 Model B
-    export PATH=/opt/gcc-arm-10.3-2021.07-x86_64-arm-none-eabi/bin/:$PATH
-    export PATH=/opt/gcc-arm-10.3-2021.07-x86_64-arm-none-linux-gnueabihf/bin:$PATH
-    UBOOT_CROSS_COMPILE="ccache arm-none-eabi-"
-    BUSYBOX_CROSS_COMPILE="ccache arm-none-linux-gnueabihf-"
-    ARCH=arm
-    # printf "ARCH=$ARCH\nUBOOT_CROSS_COMPILE=$UBOOT_CROSS_COMPILE\nBUSYBOX_CROSS_COMPILE=$BUSYBOX_CROSS_COMPILE\n"
+    export ARCH=arm
+
+    if ! grep -qs '/opt/gcc-arm-10.3-2021.07-x86_64-arm-none-eabi/bin/' <<< $PATH; then
+        export PATH=/opt/gcc-arm-10.3-2021.07-x86_64-arm-none-eabi/bin/:$PATH
+    fi
+
+    if ! grep -qs '/opt/gcc-arm-10.3-2021.07-x86_64-arm-none-linux-gnueabihf/bin' <<< $PATH; then
+        export PATH=/opt/gcc-arm-10.3-2021.07-x86_64-arm-none-linux-gnueabihf/bin:$PATH
+    fi
 }
 
-function configure_build_dirs
+function set_build_dirs
 {
     LINUX_DIR=~/repos/linux-stable
     UBOOT_DIR=~/repos/u-boot
     BUSYBOX_DIR=~/repos/busybox
     BUSYBOX_INSTALL_DIR="${BUSYBOX_DIR}/_install"
-    # printf "LINUX_DIR=$LINUX_DIR\nBUSYBOX_DIR=q$BUSYBOX_DIR\n"
 }
 
 function mount_part {
@@ -42,8 +42,7 @@ function mount_part {
             sudo umount $1
         fi
     
-        sudo mount $1 $2 ; grep -qs $1 /proc/mounts
-        # printf "${GREEN_START}${1} mount to${2}${COLOR_END}\n"
+        sudo mount $1 $2 && grep -qs $1 /proc/mounts
         return $?
     fi
 
@@ -67,25 +66,21 @@ function umount_SD
 {
     if grep -qs $SD1 /proc/mounts; then
         sudo umount $SD1
-        # printf "${GREEN_START}${SD1} umount${COLOR_END}\n"
     fi
 
     if grep -qs $SD2 /proc/mounts; then
         sudo umount $SD2
-        # printf "${GREEN_START}${SD2} umount${COLOR_END}\n"
     fi
-
 }
 
 function build_bootloader
 {
-    # export PATH=/opt/gcc-arm-10.3-2021.07-x86_64-arm-none-eabi/bin/:$PATH
-    # UBOOT_CROSS_COMPILE='ccache arm-none-eabi-'
+    export CROSS_COMPILE='ccache arm-none-eabi-'
+
     if [[ ! -f $UBOOT_DIR/MLO || ! -f $UBOOT_DIR/u-boot.img ]]; then
         cd $UBOOT_DIR
-        curl https://patchwork.ozlabs.org/series/130450/mbox/ | git am
         make am335x_boneblack_defconfig
-        make CROSS_COMPILE="$UBOOT_CROSS_COMPILE" ARCH="$ARCH" -j$((`nproc` -1)) 
+        make -j$((`nproc` -1)) 
         cd -
     else
         printf "Bootloader already exist\n"
@@ -93,19 +88,20 @@ function build_bootloader
         case $OPTION in 
         [Yy]* )
             cd $UBOOT_DIR
-            curl https://patchwork.ozlabs.org/series/130450/mbox/ | git am
             make am335x_boneblack_defconfig
-            make CROSS_COMPILE="$UBOOT_CROSS_COMPILE" ARCH="$ARCH" -j$((`nproc` -1)) 
+            make -j$((`nproc` -1)) 
             cd - ;;
         *) ;;
         esac
     fi
 }
 
-function compile_kernel
+function build_kernel
 {
+    export CROSS_COMPILE='ccache arm-none-eabi-'
+
     if [ ! -f $LINUX_DIR/fragments/bbb.cfg ]; then
-        mkdir -p fragments
+        mkdir -p $LINUX_DIR/fragments
         printf "# Use multi_v7_defconfig as a base for merge_config.sh
 # --- USB ---
 # Enable USB on BBB (AM335x)
@@ -133,7 +129,8 @@ CONFIG_USB_ULPI=y
 CONFIG_USB_ULPI_BUS=y
 # --- Networking ---
 CONFIG_BRIDGE=y
-# --- Device Tree Overl" | tee $LINUX_DIR/fragments/bbb.cfg > /dev/null
+# --- Device Tree Overl
+" | tee $LINUX_DIR/fragments/bbb.cfg > /dev/null
     fi
 
     if [[ ! -f $LINUX_DIR/arch/arm/boot/zImage || ! -f $LINUX_DIR/arch/arm/boot/dts/am335x-boneblack.dtb || ! -f $LINUX_DIR/System.map || ! -f $LINUX_DIR/.config ]]; then
@@ -157,10 +154,12 @@ CONFIG_BRIDGE=y
 
 function compile_busybox 
 {
+    export CROSS_COMPILE='ccache arm-none-linux-gnueabihf-'
+    
     if [[ ! -d $BUSYBOX_INSTALL_DIR ]]; then
         cd $BUSYBOX_DIR
         make defconfig
-        make CROSS_COMPILE="$BUSYBOX_CROSS_COMPILE" ARCH="$ARCH" -j$((`nproc` -1))
+        make -j$((`nproc` -1))
         make install
         mkdir -p $BUSYBOX_INSTALL_DIR/{boot,dev,etc\/init.d,lib,proc,root,sys\/kernel\/debug,tmp}
         cd -
@@ -171,7 +170,7 @@ function compile_busybox
         [Yy]* )
             cd $BUSYBOX_DIR
             make defconfig
-            make CROSS_COMPILE="$BUSYBOX_CROSS_COMPILE" ARCH="$ARCH" -j$((`nproc` -1))
+            make -j$((`nproc` -1))
             make install
             mkdir -p $BUSYBOX_INSTALL_DIR/{boot,dev,etc\/init.d,lib,proc,root,sys\/kernel\/debug,tmp}
             cd - ;;
@@ -197,7 +196,7 @@ function populate_boot
 function populate_lib 
 {
     cd $LINUX_DIR
-    make ARCH=arm INSTALL_MOD_PATH=$BUSYBOX_INSTALL_DIR modules_install
+    make INSTALL_MOD_PATH=$BUSYBOX_INSTALL_DIR modules_install
 
     libc_dir=$(${CROSS_COMPILE}gcc -print-sysroot)/lib
     cp -a $libc_dir/*.so* $BUSYBOX_INSTALL_DIR/lib
@@ -230,7 +229,7 @@ mdev -s
 " | tee $BUSYBOX_INSTALL_DIR/etc/init.d/rcS > /dev/null
 
     if [ ! -L $BUSYBOX_INSTALL_DIR/init ]; then
-        ln -s $BUSYBOX_INSTALL_DIR/bin/busybox $BUSYBOX_INSTALL_DIR/init
+        ln -s bin/busybox $BUSYBOX_INSTALL_DIR/init
     fi
 
     populate_boot
@@ -286,41 +285,70 @@ function clear_SD
     printf "${RED_START}Done\n${COLOR_END}"
 }
 
-configure_mount_dir
-configure_kernel
-configure_build_dirs
+function boot_qemu 
+{
+    find $BUSYBOX_INSTALL_DIR | cpio -o -H newc | gzip > $BUSYBOX_DIR/rootfs.cpio.gz
+    printf "${YELOW_START}To exit QEMU press: Ctrl-A X${COLOR_END}\n"
+    qemu-system-arm -kernel $BUSYBOX_INSTALL_DIR/boot/zImage -initrd $BUSYBOX_DIR/rootfs.cpio.gz \
+    -machine virt -nographic -m 512 --append "root=/dev/ram0 rw console=ttyAMA0,115200 mem=512M"
+}
 
-select OPTION in Build_Bootloader Build_Kernel Build_RootFS Boot_SD Clean_SD Exit; do
+function clean
+{
+    select OPTION in U-BOOT LINUX-STABLE BUSYBOX ALL_BELOW SD EXIT; do
+        case $OPTION in
+        U-BOOT) 
+            cd $UBOOT_DIR
+            make clean
+            cd - ;;
+        LINUX-STABLE) 
+            cd $LINUX_DIR
+            make clean
+            cd - ;;
+        BUSYBOX) 
+            cd $BUSYBOX_DIR
+            make clean
+            cd - ;; 
+        ALL_BELOW)
+            local C_PWD=$PWD
+            cd $UBOOT_DIR
+            make clean
+            cd $LINUX_DIR
+            make clean
+            cd $BUSYBOX_DIR
+            make clean
+            cd $C_PWD ;;
+        SD) 
+            if mount_SD; then
+                clear_SD
+                umount_SD
+            else
+                printf "${RED_START}SD do not pluged${COLOR_END}\n"
+            fi ;;
+        EXIT) break ;;
+        esac
+    done
+}
+
+set_exports
+set_mount_dir
+set_build_dirs
+
+select OPTION in Build_Bootloader Build_Kernel Build_RootFS QEMU Boot_SD Clean Exit; do
     case $OPTION in
-    Build_Bootloader)
-        build_bootloader
-        ;;
-    Build_Kernel)
-        compile_kernel
-        ;;
-    Build_RootFS)
-        build_rootfs
-        ;;
+    Build_Bootloader) build_bootloader ;;
+    Build_Kernel) build_kernel ;;
+    Build_RootFS) build_rootfs ;;
+    QEMU) boot_qemu ;;
     Boot_SD)
         if mount_SD; then
             copy_to_SD
             umount_SD
         else
             printf "${RED_START}SD do not pluged${COLOR_END}\n"
-        fi    
-        ;;
-    Clean_SD)
-        if mount_SD; then
-            clear_SD
-            umount_SD
-        else
-            printf "${RED_START}SD do not pluged${COLOR_END}\n"
-        fi
-        ;;
-    Exit)  
-        break 
-        ;;
-    *)
-        ;;
+        fi ;;
+    Clean) clean ;;
+    Exit) break ;;
+    *) ;;
     esac
 done

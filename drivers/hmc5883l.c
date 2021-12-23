@@ -76,10 +76,15 @@ static void set_device_mode(struct i2c_client *drv_client)
 	i2c_smbus_write_byte_data(drv_client, MODE_REG, 	DEFAULT_MODE);
 }
 
+CLASS_ATTR_RO(axis_X);
+CLASS_ATTR_RO(axis_Y);
+CLASS_ATTR_RO(axis_Z);
+
+static struct class *attr_class;
+
 static int hmc5883l_probe(struct i2c_client *drv_client, const struct i2c_device_id *id)
 {
-	// int reg = 0;
-	// struct device_node *node;
+	int ret = 0;
 	
 	dev_info(&drv_client->dev, "i2c client address is 0x%X\n", drv_client->addr);
 	dev_info(&drv_client->dev, "i2c driver probed\n");
@@ -90,19 +95,61 @@ static int hmc5883l_probe(struct i2c_client *drv_client, const struct i2c_device
 	hmc5883l.client = drv_client;
 	set_device_mode(drv_client);
 	hmc5883l_read_data();
-	
-	// node =	drv_client->dev.of_node;
-	// of_property_read_u32(node, "reg", &reg);
-	// dev_info(&drv_client->dev, "reg = %d\n", reg);
 
+	attr_class = class_create(THIS_MODULE, "hmc5883l");
+	if (IS_ERR(attr_class)) {
+		ret = PTR_ERR(attr_class);
+		dev_info(&drv_client->dev, "HMC5883L: failed to create sysfs class: %d\n", ret);
+		goto err1;
+	}
+
+	ret = class_create_file(attr_class, &class_attr_axis_X);
+    if (ret) {
+		dev_info(&drv_client->dev, "HMC5883L: failed to create sysfs class attribute axis_X: %d\n", ret);
+        goto err2;
+	}
+
+    ret = class_create_file(attr_class, &class_attr_axis_Y);
+	if (ret) {
+		dev_info(&drv_client->dev, "HMC5883L: failed to create sysfs class attribute axis_Y: %d\n", ret);
+        goto err3;
+	}
+
+    ret = class_create_file(attr_class, &class_attr_axis_Z);
+	if (ret) {
+		dev_info(&drv_client->dev, "HMC5883L: failed to create sysfs class attribute axis_Z: %d\n", ret);
+        goto err4;
+	}
+
+	dev_info(&drv_client->dev, "HMC5883L: driver initialized.\n");
 	return 0;
+
+err4:   
+	class_remove_file(attr_class, &class_attr_axis_Y);
+err3:   
+	class_remove_file(attr_class, &class_attr_axis_X);
+err2:	
+	class_destroy(attr_class);
+err1:   
+	dev_info(&drv_client->dev, "HMC5883L: module probe fail.\n");
+
+    return ret;
 }
 
 static int hmc5883l_remove(struct i2c_client *drv_client)
 {
 	hmc5883l.client = 0;
-	dev_info(&drv_client->dev, "i2c driver removed\n");
-	
+    if (attr_class) {
+		class_remove_file(attr_class, &class_attr_axis_Z);
+		class_remove_file(attr_class, &class_attr_axis_Y);
+		class_remove_file(attr_class, &class_attr_axis_X);
+		dev_info(&drv_client->dev, "sysfs class attributes removed\n");
+
+		class_destroy(attr_class);
+		dev_info(&drv_client->dev, "HMC5883L: sysfs class destroyed\n");
+	}
+
+	dev_info(&drv_client->dev, "HMC5883L: device disabled\n");	
 	return 0;
 }
 
@@ -121,82 +168,7 @@ static struct i2c_driver hmc5883l_i2c_driver = {
     .remove = hmc5883l_remove,
     .id_table = hmc5883l_idtable,
 };
-
-CLASS_ATTR_RO(axis_X);
-CLASS_ATTR_RO(axis_Y);
-CLASS_ATTR_RO(axis_Z);
-
-static struct class *attr_class;
-
-static int HMC5883L_init(void)
-{	
-	int ret;
-
-	ret = i2c_add_driver(&hmc5883l_i2c_driver);
-	
-    if (ret) {
-		printk(KERN_ERR "HMC5883L: failed to add new i2c driver: %d\n", ret);
-		return ret;
-	}
-
-	attr_class = class_create(THIS_MODULE, "hmc5883l");
-
-	if (IS_ERR(attr_class)) {
-		ret = PTR_ERR(attr_class);
-		printk(KERN_ERR "HMC5883L: failed to create sysfs class: %d\n", ret);
-		goto err1;
-	}
-
-	ret = class_create_file(attr_class, &class_attr_axis_X);
-    if (ret) {
-		printk(KERN_ERR "HMC5883L: failed to create sysfs class attribute axis_X: %d\n", ret);
-        goto err2;
-	}
-
-    ret = class_create_file(attr_class, &class_attr_axis_Y);
-	if (ret) {
-		printk(KERN_ERR "HMC5883L: failed to create sysfs class attribute axis_Y: %d\n", ret);
-        goto err3;
-	}
-
-    ret = class_create_file(attr_class, &class_attr_axis_Z);
-	if (ret) {
-		printk(KERN_ERR "HMC5883L: failed to create sysfs class attribute axis_Z: %d\n", ret);
-        goto err4;
-	}
-
-	printk(KERN_INFO "HMC5883L: sysfs class created\n");
-	printk(KERN_INFO "HMC5883L: driver initialized.\n");
-
-	return 0;
-
-err4:   class_remove_file(attr_class, &class_attr_axis_Y);
-err3:   class_remove_file(attr_class, &class_attr_axis_X);
-err2:	i2c_del_driver(&hmc5883l_i2c_driver);
-err1:   class_destroy(attr_class);
-	printk(KERN_INFO "HMC5883L: module initialization fail.\n");
-
-    return ret;
-}
- 
-static void HMC5883L_exit(void)
-{
-    if (attr_class) {
-		class_remove_file(attr_class, &class_attr_axis_Z);
-		class_remove_file(attr_class, &class_attr_axis_Y);
-		class_remove_file(attr_class, &class_attr_axis_X);
-		printk(KERN_INFO "HMC5883L: sysfs class attributes removed\n");
-
-		class_destroy(attr_class);
-		printk(KERN_INFO "HMC5883L: sysfs class destroyed\n");
-	}
-
-	i2c_del_driver(&hmc5883l_i2c_driver);
-	printk(KERN_INFO "HMC5883L: module disabled.\n");
-}
- 
-module_init(HMC5883L_init);
-module_exit(HMC5883L_exit);
+module_i2c_driver(hmc5883l_i2c_driver);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Oleksandr Povshenko");

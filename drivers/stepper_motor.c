@@ -2,21 +2,18 @@
 #include <linux/init.h>
 #include <linux/gpio.h>
 #include <linux/delay.h>
-#include <linux/device/class.h>
+#include <linux/device.h>
 #include <linux/kthread.h>
 #include <linux/platform_device.h>
 #include "stepper_motor.h"
 
-MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Oleksandr Povshenko");
-MODULE_DESCRIPTION("Driver for stepper motor");
 
 #define GPIO_NUMB 4
 
 struct stepper_s {
     struct platform_device *pdev;
     struct task_struct *thread;
-    u32 gpio[4];
+    u32 gpio[GPIO_NUMB];
     u32 speed;
     u32 steps;
     u8 busy;
@@ -26,62 +23,7 @@ static void small_steps(struct stepper_s *motor);
 
 struct stepper_s motor;
 
-static int stepper_probe(struct platform_device *pdev)
-{
-	int ret;
-	struct device_node *node = pdev->dev.of_node;
-
-    motor.pdev = pdev;
-
-	ret = of_property_read_u32_array(node, "pins", motor.gpio, 4);
-	if (!ret){
-		printk(KERN_INFO "STEPPER: Used pins: %d %d %d %d\n", 
-            motor.gpio[0], motor.gpio[1], motor.gpio[2], motor.gpio[3]);
-	} else {
-		printk(KERN_WARNING "STEPPER: Used default pins\n");
-        motor.gpio[0] = STEPPER_OUT_0;
-        motor.gpio[1] = STEPPER_OUT_1;
-        motor.gpio[2] = STEPPER_OUT_2;
-        motor.gpio[3] = STEPPER_OUT_3;
-	}
-
-	dev_info(&pdev->dev, "device probed\n");
-
-	return 0;
-}
-
-static int stepper_remove(struct platform_device* pdev)
-{
-	printk(KERN_INFO "STEPPER: driver removed");
-	return 0;
-}
-
-static const struct of_device_id stepper_keys[] = {
-    { .compatible = "stepper", },
-    {},
-};
-MODULE_DEVICE_TABLE(of, stepper_keys);
-
-static struct platform_driver stepper_driver = {
-    .probe = stepper_probe,
-    .remove = stepper_remove,
-    .driver = {
-        .name = "stepper",
-        .of_match_table = of_match_ptr(stepper_keys),
-        .owner = THIS_MODULE,
-    }
-};
-
-static int thread_func(void *data)
-{
-    struct stepper_s *motor = (struct stepper_s *) data;
-    motor->busy = 1;
-    small_steps(motor);
-    motor->busy = 0;
-
-	return 0;
-}
-
+/*
 static void gpio_test(struct stepper_s *motor)
 {
     int index = 0;
@@ -93,6 +35,17 @@ static void gpio_test(struct stepper_s *motor)
         gpio_set_value(motor->gpio[index], 0);
         ++index;
     }
+}
+*/
+
+static int thread_func(void *data)
+{
+    struct stepper_s *motor = (struct stepper_s *) data;
+    motor->busy = 1;
+    small_steps(motor);
+    motor->busy = 0;
+
+	return 0;
 }
 
 static int gpio_init(struct stepper_s *motor)
@@ -114,19 +67,15 @@ static int gpio_init(struct stepper_s *motor)
         printk(KERN_INFO "PIN[%d] ( %d ): request %s\n",
             index, motor->gpio[index], err ? "fail" : "success"); 
         
-        err = gpio_direction_output(motor->gpio[index], 0);
+        gpio_direction_output(motor->gpio[index], 0);
 
-        printk(KERN_INFO "PIN[%d] ( %d ): set direction %s\n",
-            index, motor->gpio[index], err ? "fail" : "success"); 
-        
         gpio_init ^= !err << index;
         ++index;
     }
 
-    printk(KERN_INFO "gpio_init: 0b%d%d%d%d\n", 
-        !!(gpio_init & 0x1), !!(gpio_init & 0x2), !!(gpio_init & 0x4), !!(gpio_init & 0x8));
-
-    if(gpio_init ^ 0xF) {
+    if(!(gpio_init ^ 0xF)) {
+        printk(KERN_WARNING "STEPPER: GPIO init success\n");
+    } else {
         index = 0;
         while(index < GPIO_NUMB) {
             if(gpio_init ^ BIT(index))
@@ -138,9 +87,7 @@ static int gpio_init(struct stepper_s *motor)
         printk(KERN_ERR "STEPPER: GPIO init fail\n");
         return -ENODEV;
     }
-    gpio_test(motor);
-
-    printk(KERN_WARNING "STEPPER: GPIO init success\n");
+    // gpio_test(motor);
 
     return 0;
 }
@@ -365,74 +312,111 @@ CLASS_ATTR_RO(busy);
 
 static struct class *attr_class;
 
-static int __init stepper_init(void)
-{	
-    int err;
+static int stepper_probe(struct platform_device *pdev)
+{
+	int ret;
+	struct device_node *node = pdev->dev.of_node;
 
-	if (platform_driver_register(&stepper_driver)) {
-		printk(KERN_ERR "STEPPER: failed to register driver");
-		return EINVAL;
+    motor.pdev = pdev;
+
+	ret = of_property_read_u32_array(node, "pins", motor.gpio, 4);
+	if (!ret){
+		printk(KERN_INFO "STEPPER: Used pins: %d %d %d %d\n", 
+            motor.gpio[0], motor.gpio[1], motor.gpio[2], motor.gpio[3]);
+	} else {
+		printk(KERN_WARNING "STEPPER: Used default pins\n");
+        motor.gpio[0] = STEPPER_OUT_0;
+        motor.gpio[1] = STEPPER_OUT_1;
+        motor.gpio[2] = STEPPER_OUT_2;
+        motor.gpio[3] = STEPPER_OUT_3;
 	}
-
-    err = gpio_init(&motor); 
-	if (err)
-        return -ENODEV;
+    
+    ret = gpio_init(&motor); 
+	if (ret) {
+	    goto err_gpio_init;
+    }
 
 	attr_class = class_create(THIS_MODULE, "stepper");
 	if (IS_ERR(attr_class)) {
-		err = PTR_ERR(attr_class);
-		printk(KERN_ERR "stepper: failed to create sysfs class: %d\n", err);
+		ret = PTR_ERR(attr_class);
+		printk(KERN_ERR "stepper: failed to create sysfs class: %d\n", ret);
 		goto err_class_create;
 	}
 
-	err = class_create_file(attr_class, &class_attr_steps);
-    if (err) {
-		printk(KERN_ERR "stepper: failed to create sysfs class attribute steps: %d\n", err);
-        goto err_steps_class_file;
+	ret = class_create_file(attr_class, &class_attr_steps);
+    if (ret) {
+		printk(KERN_ERR "stepper: failed to create sysfs class attribute steps: %d\n", ret);
+        goto err_class_file_steps;
 	}
 
-	err = class_create_file(attr_class, &class_attr_speed);
-    if (err) {
-		printk(KERN_ERR "stepper: failed to create sysfs class attribute speed: %d\n", err);
-        goto err_speed_class_file;
+	ret = class_create_file(attr_class, &class_attr_speed);
+    if (ret) {
+		printk(KERN_ERR "stepper: failed to create sysfs class attribute speed: %d\n", ret);
+        goto err_class_file_speed;
 	}
 
-	err = class_create_file(attr_class, &class_attr_busy);
-    if (err) {
-		printk(KERN_ERR "stepper: failed to create sysfs class attribute busy: %d\n", err);
-        goto err_speed_class_busy;
+	ret = class_create_file(attr_class, &class_attr_busy);
+    if (ret) {
+		printk(KERN_ERR "stepper: failed to create sysfs class attribute busy: %d\n", ret);
+        goto err_class_file_busy;
 	}
-    
-    printk(KERN_INFO "stepper motor driver initialized.\n");
+
+	dev_info(&pdev->dev, "device probed\n");
 
 	return 0;
 
-err_speed_class_busy:
+err_class_file_busy:
     class_remove_file(attr_class, &class_attr_speed);
-err_speed_class_file:
+err_class_file_speed:
     class_remove_file(attr_class, &class_attr_steps);
-err_steps_class_file:
+err_class_file_steps:
     class_destroy(attr_class);
-err_class_create:
+err_class_create: 
     gpio_deinit(&motor);
+err_gpio_init:
+    dev_info(&pdev->dev, "device probed failed\n");
 
-    return -ENODEV;
+    return -EAGAIN;
 }
 
-static void __exit stepper_exit(void)
+static int stepper_remove(struct platform_device* pdev)
 {
-	platform_driver_unregister(&stepper_driver);
-
     if(motor.thread)
 		kthread_stop(motor.thread);
+    
     class_remove_file(attr_class, &class_attr_busy);
     class_remove_file(attr_class, &class_attr_steps);
     class_remove_file(attr_class, &class_attr_speed);
     class_destroy(attr_class);
     gpio_deinit(&motor);
 
-	printk(KERN_INFO "stepper motor disabled.\n");
+	printk(KERN_INFO "STEPPER: driver removed");
+	return 0;
 }
 
-module_init(stepper_init);
-module_exit(stepper_exit);
+static const struct platform_device_id stepper_keys[] = {
+    { "stepper", 0},
+    {},
+};
+MODULE_DEVICE_TABLE(platform, stepper_keys);
+
+static const struct of_device_id stepper_of_table[] = {
+    { .compatible = "stepper" },
+    { },
+};
+MODULE_DEVICE_TABLE(of, stepper_of_table);
+
+static struct platform_driver stepper_driver = {
+    .probe = stepper_probe,
+    .remove = stepper_remove,
+    .id_table = stepper_keys,
+    .driver = {
+        .name = "stepper",
+        .of_match_table = stepper_of_table,
+    }
+};
+module_platform_driver(stepper_driver);
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Oleksandr Povshenko");
+MODULE_DESCRIPTION("Driver for stepper motor");

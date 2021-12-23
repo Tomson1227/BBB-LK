@@ -17,13 +17,12 @@ Extract this toolchain to /opt : \
 ## u-boot
 `git clone https://gitlab.denx.de/u-boot/u-boot.git` \
 `cd u-boot` \
-`git checkout v2020.10`
+`git checkout v2019.07`
 
 ## linux-stable 
 `git clone git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git` \
 `cd linux-stable` \
-`git checkout linux-4.9.y` \
-`curl https://patchwork.ozlabs.org/series/130450/mbox/ | git am`
+`git checkout linux-5.4.y`
 
 ## busybox
 `git clone git://git.busybox.net/busybox` \

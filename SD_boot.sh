@@ -14,6 +14,7 @@ function set_mount_dir
 function set_exports
 {
     export ARCH=arm
+    export CROSS_COMPILE='ccache arm-none-linux-gnueabihf-'
 
     if ! grep -qs '/opt/gcc-arm-10.3-2021.07-x86_64-arm-none-eabi/bin/' <<< $PATH; then
         export PATH=/opt/gcc-arm-10.3-2021.07-x86_64-arm-none-eabi/bin/:$PATH
@@ -22,6 +23,7 @@ function set_exports
     if ! grep -qs '/opt/gcc-arm-10.3-2021.07-x86_64-arm-none-linux-gnueabihf/bin' <<< $PATH; then
         export PATH=/opt/gcc-arm-10.3-2021.07-x86_64-arm-none-linux-gnueabihf/bin:$PATH
     fi
+
 }
 
 function set_build_dirs
@@ -49,7 +51,8 @@ function mount_part {
     return 1
 }
 
-function mount_SD {
+function mount_SD 
+{
     SD1=`find /dev/ -name "sd?1"`
     SD2=`find /dev/ -name "sd?2"`
 
@@ -96,10 +99,54 @@ function build_bootloader
     fi
 }
 
-function build_kernel
+function build_bootloader_v2 
+{
+    if [[ ! -f $UBOOT_DIR/MLO || ! -f $UBOOT_DIR/u-boot.img ]]; then
+        cd $UBOOT_DIR
+        make am335x_evm_defconfig
+        make -j$((`nproc` -1)) 
+        cd -
+    else
+        printf "Bootloader already exist\n"
+        read -p "Rebuild it? [N/y]: " OPTION
+        case $OPTION in 
+        [Yy]* )
+            cd $UBOOT_DIR  
+            rm -rf $UBOOT_DIR/MLO $UBOOT_DIR/u-boot.img
+            make am335x_evm_defconfig
+            make -j$((`nproc` -1))  
+            cd - ;;
+        *) ;;
+        esac
+    fi
+}
+
+function make_kernel
 {
     export CROSS_COMPILE='ccache arm-none-eabi-'
 
+    cd $LINUX_DIR
+        ./scripts/kconfig/merge_config.sh arch/arm/configs/multi_v7_defconfig fragments/bbb.cfg
+        read -p "Use default kernel config [Y/n]: " OPTION
+        case $OPTION in 
+        [nN]*) make menuconfig ;;
+        *) ;;
+        esac
+        make -j$((`nproc` -1)) zImage modules am335x-boneblack.dtb
+    cd - 
+}
+
+function make_kernel_v2
+{
+    cd $LINUX_DIR
+        make -j$((`nproc` -1)) omap2plus_defconfig
+        # make -j$((`nproc` -1)) multi_v7_defconfig 
+        make -j$((`nproc` -1)) zImage modules dtbs
+    cd -
+}
+
+function build_kernel
+{
     if [ ! -f $LINUX_DIR/fragments/bbb.cfg ]; then
         mkdir -p $LINUX_DIR/fragments
         printf "# Use multi_v7_defconfig as a base for merge_config.sh
@@ -129,24 +176,21 @@ CONFIG_USB_ULPI=y
 CONFIG_USB_ULPI_BUS=y
 # --- Networking ---
 CONFIG_BRIDGE=y
-# --- Device Tree Overl
+# --- Device Tree Overlays (.dtbo support) ---
+CONFIG_OF_OVERLAY=y
 " | tee $LINUX_DIR/fragments/bbb.cfg > /dev/null
     fi
 
-    if [[ ! -f $LINUX_DIR/arch/arm/boot/zImage || ! -f $LINUX_DIR/arch/arm/boot/dts/am335x-boneblack.dtb || ! -f $LINUX_DIR/System.map || ! -f $LINUX_DIR/.config ]]; then
-        cd $LINUX_DIR
-        ./scripts/kconfig/merge_config.sh arch/arm/configs/multi_v7_defconfig fragments/bbb.cfg
-        make -j$((`nproc` -1)) zImage modules am335x-boneblack.dtb
-        cd -
+    if [[ ! -f $LINUX_DIR/arch/arm/boot/zImage || \
+          ! -f $LINUX_DIR/arch/arm/boot/dts/am335x-boneblack.dtb || \
+          ! -f $LINUX_DIR/System.map || \
+          ! -f $LINUX_DIR/.config ]]; then
+        make_kernel_v2
     else
         printf "Kernel already exist\n"
         read -p "Rebuild it? [N/y]: " OPTION
         case $OPTION in 
-        [Yy]* )
-            cd $LINUX_DIR
-            ./scripts/kconfig/merge_config.sh arch/arm/configs/multi_v7_defconfig fragments/bbb.cfg
-            make -j$((`nproc` -1)) zImage modules am335x-boneblack.dtb
-            cd - ;;
+        [Yy]*) make_kernel_v2 ;;
         *) ;;
         esac
     fi
@@ -182,8 +226,11 @@ function compile_busybox
 #Populate /boot
 function populate_boot 
 {
-    if [[ ! -f $LINUX_DIR/arch/arm/boot/zImage || ! -f $LINUX_DIR/arch/arm/boot/dts/am335x-boneblack.dtb || ! -f $LINUX_DIR/System.map || ! -f $LINUX_DIR/.config ]]; then
-        compile_kernel
+    if [[ ! -f $LINUX_DIR/arch/arm/boot/zImage || \
+          ! -f $LINUX_DIR/arch/arm/boot/dts/am335x-boneblack.dtb || \
+          ! -f $LINUX_DIR/System.map || \
+          ! -f $LINUX_DIR/.config ]]; then
+        make_kernel_v2
     fi
 
     cp $LINUX_DIR/arch/arm/boot/zImage $BUSYBOX_INSTALL_DIR/boot
@@ -224,9 +271,23 @@ function build_rootfs
 mount -t sysfs none /sys
 mount -t proc none /proc
 mount -t debugfs none /sys/kernel/debug
-echo /sbin/mdev > /proc/sys/kernel/hotplug
-mdev -s
+# echo /sbin/mdev > /proc/sys/kernel/hotplug
+# mdev -s
 " | tee $BUSYBOX_INSTALL_DIR/etc/init.d/rcS > /dev/null
+
+#     touch $BUSYBOX_INSTALL_DIR/boot/uEnv.txt
+#     printf 'bootpart=0:1    
+# devtype=mmc        
+# bootdir=    
+# bootfile=zImage    
+# bootpartition=mmcblk0p2    
+# console=ttyS0,115200n8     
+# loadaddr=0x82000000    
+# fdtaddr=0x88000000        
+# set_mmc1=if test $board_name = A33515BB; then setenv bootpartition mmcblk1p2; fi
+# set_bootargs=setenv bootargs console=${console} root=/dev/${bootpartition} rw rootfstype=ext4 rootwait
+# uenvcmd=run set_mmc1; run set_bootargs;run loadimage;run loadfdt;printenv bootargs;bootz ${loadaddr} - ${fdtaddr}
+# ' | sudo tee $BUSYBOX_INSTALL_DIR/boot/uEnv.txt > /dev/null
 
     if [ ! -L $BUSYBOX_INSTALL_DIR/init ]; then
         ln -s bin/busybox $BUSYBOX_INSTALL_DIR/init
@@ -244,7 +305,7 @@ function copy_to_SD
         read -p "Build one? [N/y]: " OPTION
         case $OPTION in 
         [Yy]* )
-            build_bootloader
+            build_bootloader_v2
             printf "${GREEN_START}Copying${COLOR_END}: $BOOT_DIR\n"
             sudo cp $UBOOT_DIR/MLO $UBOOT_DIR/u-boot.img $BOOT_DIR
             break ;;
@@ -336,7 +397,7 @@ set_build_dirs
 
 select OPTION in Build_Bootloader Build_Kernel Build_RootFS QEMU Boot_SD Clean Exit; do
     case $OPTION in
-    Build_Bootloader) build_bootloader ;;
+    Build_Bootloader) build_bootloader_v2 ;;
     Build_Kernel) build_kernel ;;
     Build_RootFS) build_rootfs ;;
     QEMU) boot_qemu ;;

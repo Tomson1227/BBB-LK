@@ -4,6 +4,7 @@ RED_START="\033[1;31m"
 GREEN_START="\033[1;32m"
 YELOW_START="\033[1;33m"
 COLOR_END="\033[0m"
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
 function set_mount_dir
 {
@@ -76,35 +77,33 @@ function umount_SD
     fi
 }
 
-function build_bootloader
+function make_bootloader_v1
 {
-    export CROSS_COMPILE='ccache arm-none-eabi-'
-
-    if [[ ! -f $UBOOT_DIR/MLO || ! -f $UBOOT_DIR/u-boot.img ]]; then
-        cd $UBOOT_DIR
-        make am335x_boneblack_defconfig
-        make -j$((`nproc` -1)) 
-        cd -
-    else
-        printf "Bootloader already exist\n"
-        read -p "Rebuild it? [N/y]: " OPTION
-        case $OPTION in 
-        [Yy]* )
-            cd $UBOOT_DIR
-            make am335x_boneblack_defconfig
-            make -j$((`nproc` -1)) 
-            cd - ;;
-        *) ;;
-        esac
-    fi
+    make am335x_boneblack_defconfig
+    read -p "Addit defconfig? [N/y]: " OPTION
+    case $OPTION in 
+    [yY]*) make menuconfig ;;
+    *) ;;
+    esac
+    make -j$((`nproc` -1))  
 }
 
-function build_bootloader_v2 
+function make_bootloader_v2
+{
+    make am335x_evm_defconfig
+    read -p "Addit defconfig? [N/y]: " OPTION
+    case $OPTION in 
+    [yY]*) make menuconfig ;;
+    *) ;;
+    esac
+    make -j$((`nproc` -1))  
+}
+
+function build_bootloader
 {
     if [[ ! -f $UBOOT_DIR/MLO || ! -f $UBOOT_DIR/u-boot.img ]]; then
         cd $UBOOT_DIR
-        make am335x_evm_defconfig
-        make -j$((`nproc` -1)) 
+        make_bootloader_v2
         cd -
     else
         printf "Bootloader already exist\n"
@@ -112,9 +111,7 @@ function build_bootloader_v2
         case $OPTION in 
         [Yy]* )
             cd $UBOOT_DIR  
-            rm -rf $UBOOT_DIR/MLO $UBOOT_DIR/u-boot.img
-            make am335x_evm_defconfig
-            make -j$((`nproc` -1))  
+            make_bootloader_v2
             cd - ;;
         *) ;;
         esac
@@ -147,39 +144,39 @@ function make_kernel_v2
 
 function build_kernel
 {
-    if [ ! -f $LINUX_DIR/fragments/bbb.cfg ]; then
-        mkdir -p $LINUX_DIR/fragments
-        printf "# Use multi_v7_defconfig as a base for merge_config.sh
-# --- USB ---
-# Enable USB on BBB (AM335x)
-CONFIG_USB_ANNOUNCE_NEW_DEVICES=y
-CONFIG_USB_EHCI_ROOT_HUB_TT=y
-CONFIG_AM335X_PHY_USB=y
-CONFIG_USB_MUSB_TUSB6010=y
-CONFIG_USB_MUSB_OMAP2PLUS=y
-CONFIG_USB_MUSB_HDRC=y
-CONFIG_USB_MUSB_DSPS=y
-CONFIG_USB_MUSB_AM35X=y
-CONFIG_USB_CONFIGFS=y
-CONFIG_NOP_USB_XCEIV=y
-# For USB keyboard and mouse
-CONFIG_USB_HID=y
-CONFIG_USB_HIDDEV=y
-# For PL2303, FTDI, etc
-CONFIG_USB_SERIAL=y
-CONFIG_USB_SERIAL_PL2303=y
-CONFIG_USB_SERIAL_GENERIC=y
-CONFIG_USB_SERIAL_SIMPLE=y
-CONFIG_USB_SERIAL_FTDI_SIO=y
-# For USB mass storage devices (like flash USB stick)
-CONFIG_USB_ULPI=y
-CONFIG_USB_ULPI_BUS=y
-# --- Networking ---
-CONFIG_BRIDGE=y
-# --- Device Tree Overlays (.dtbo support) ---
-CONFIG_OF_OVERLAY=y
-" | tee $LINUX_DIR/fragments/bbb.cfg > /dev/null
-    fi
+#     if [ ! -f $LINUX_DIR/fragments/bbb.cfg ]; then
+#         mkdir -p $LINUX_DIR/fragments
+#         printf "# Use multi_v7_defconfig as a base for merge_config.sh
+# # --- USB ---
+# # Enable USB on BBB (AM335x)
+# CONFIG_USB_ANNOUNCE_NEW_DEVICES=y
+# CONFIG_USB_EHCI_ROOT_HUB_TT=y
+# CONFIG_AM335X_PHY_USB=y
+# CONFIG_USB_MUSB_TUSB6010=y
+# CONFIG_USB_MUSB_OMAP2PLUS=y
+# CONFIG_USB_MUSB_HDRC=y
+# CONFIG_USB_MUSB_DSPS=y
+# CONFIG_USB_MUSB_AM35X=y
+# CONFIG_USB_CONFIGFS=y
+# CONFIG_NOP_USB_XCEIV=y
+# # For USB keyboard and mouse
+# CONFIG_USB_HID=y
+# CONFIG_USB_HIDDEV=y
+# # For PL2303, FTDI, etc
+# CONFIG_USB_SERIAL=y
+# CONFIG_USB_SERIAL_PL2303=y
+# CONFIG_USB_SERIAL_GENERIC=y
+# CONFIG_USB_SERIAL_SIMPLE=y
+# CONFIG_USB_SERIAL_FTDI_SIO=y
+# # For USB mass storage devices (like flash USB stick)
+# CONFIG_USB_ULPI=y
+# CONFIG_USB_ULPI_BUS=y
+# # --- Networking ---
+# CONFIG_BRIDGE=y
+# # --- Device Tree Overlays (.dtbo support) ---
+# CONFIG_OF_OVERLAY=y
+# " | tee $LINUX_DIR/fragments/bbb.cfg > /dev/null
+#     fi
 
     if [[ ! -f $LINUX_DIR/arch/arm/boot/zImage || \
           ! -f $LINUX_DIR/arch/arm/boot/dts/am335x-boneblack.dtb || \
@@ -305,7 +302,7 @@ function copy_to_SD
         read -p "Build one? [N/y]: " OPTION
         case $OPTION in 
         [Yy]* )
-            build_bootloader_v2
+            build_bootloader
             printf "${GREEN_START}Copying${COLOR_END}: $BOOT_DIR\n"
             sudo cp $UBOOT_DIR/MLO $UBOOT_DIR/u-boot.img $BOOT_DIR
             break ;;
@@ -335,6 +332,16 @@ function copy_to_SD
     fi
 
     printf "${GREEN_START}Done\n${COLOR_END}"
+}
+
+function boot_SD
+{
+    if mount_SD; then
+        copy_to_SD
+        umount_SD
+    else
+        printf "${RED_START}SD do not pluged${COLOR_END}\n"
+    fi
 }
 
 function clear_SD 
@@ -391,24 +398,39 @@ function clean
     done
 }
 
+function modules
+{
+    select OPTION in ADD UPDATE REMOVE COMPILE BOOT_SD EXIT; do
+        case $OPTION in
+        ADD) bash $SCRIPT_DIR/drivers/insert_drivers.sh 1 ;;
+        UPDATE) bash $SCRIPT_DIR/drivers/insert_drivers.sh 2 ;;
+        REMOVE) bash $SCRIPT_DIR/drivers/insert_drivers.sh 3 ;;
+        COMPILE) 
+            make_kernel_v2
+            populate_boot
+            populate_lib ;;
+        BOOT_SD) boot_SD ;;
+        EXIT) break ;;
+        *) ;;
+        esac
+    done
+    
+
+}
+
 set_exports
 set_mount_dir
 set_build_dirs
 
-select OPTION in Build_Bootloader Build_Kernel Build_RootFS QEMU Boot_SD Clean Exit; do
+select OPTION in Build_Bootloader Build_Kernel Build_RootFS QEMU Boot_SD Modules Clean Exit; do
     case $OPTION in
-    Build_Bootloader) build_bootloader_v2 ;;
+    Build_Bootloader) build_bootloader ;;
     Build_Kernel) build_kernel ;;
     Build_RootFS) build_rootfs ;;
     QEMU) boot_qemu ;;
-    Boot_SD)
-        if mount_SD; then
-            copy_to_SD
-            umount_SD
-        else
-            printf "${RED_START}SD do not pluged${COLOR_END}\n"
-        fi ;;
+    Boot_SD) boot_SD ;;
     Clean) clean ;;
+    Modules) modules ;;
     Exit) break ;;
     *) ;;
     esac

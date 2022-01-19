@@ -1,11 +1,13 @@
 #! /bin/bash
 
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
 # OVERLAY_DIR=~/repos/linux/scripts/dtc/include-prefixes/arm/overlays
 DRIVES_DIR=~/repos/linux-stable/drivers/misc
 
 # OVELAYS=$(find ./overlays -name "*.dts" -exec basename -- "{}" \;)
-FILES=$(find . -maxdepth 1 -type f \( -name "*.c" -o -name "*.h" \) -exec basename -- "{}" \;)
-C_FILES=$(find . -maxdepth 1 -type f -name "*.c" -exec basename -- "{}" \;)
+FILES=$(find ${SCRIPT_DIR} -maxdepth 1 -type f \( -name "*.c" -o -name "*.h" \) -exec basename -- "{}" \;)
+C_FILES=$(find ${SCRIPT_DIR} -maxdepth 1 -type f -name "*.c" -exec basename -- "{}" \;)
 
 function install_drivers() {
     # if [ -d $OVERLAY_DIR ]; then
@@ -41,7 +43,7 @@ function install_drivers() {
             if [ -f $DRIVES_DIR/$i ]; then
                 printf "\033[1;33mEXIST\033[0m: $i\n"
             else
-                cp $i $DRIVES_DIR
+                cp $SCRIPT_DIR/$i $DRIVES_DIR
                 printf "\033[1;32mCOPYED\033[0m: $i\n"
             fi
         done
@@ -91,7 +93,7 @@ function update_drivers() {
     if [ -d $DRIVES_DIR ]; then
         printf "$DRIVES_DIR:\n"
         for i in ${FILES[@]}; do
-            cp $i $DRIVES_DIR
+            cp $SCRIPT_DIR/$i $DRIVES_DIR
             printf "\033[1;32mUPDATE\033[0m: $i\n"
         done
     fi
@@ -163,21 +165,32 @@ function delete_drivers() {
     fi
 }
 
-select CHOSE in INSTALL UPDATE DELETE EXIT; do
-    case $CHOSE in
-        INSTALL)
-            install_drivers 
-            ;;
-        UPDATE)  
-            update_drivers  
-            ;;
-        DELETE)  
-            delete_drivers  
-            ;;
-        EXIT)   
-            break 
-            ;;
-        *) 
-            ;;
-    esac
-done
+if [ "$#" -ne 0 ]; then
+    for ARG in "$@"; do
+        case $ARG in
+            1) install_drivers ;;
+            2) update_drivers ;;
+            3) delete_drivers ;;
+            *) ;;
+        esac 
+    done
+else
+    select CHOSE in INSTALL UPDATE DELETE EXIT; do
+        case $CHOSE in
+            INSTALL)
+                install_drivers 
+                ;;
+            UPDATE)  
+                update_drivers  
+                ;;
+            DELETE)  
+                delete_drivers  
+                ;;
+            EXIT)   
+                break 
+                ;;
+            *) 
+                ;;
+        esac
+    done
+fi

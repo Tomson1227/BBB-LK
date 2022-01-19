@@ -30,32 +30,14 @@ static int hmc5883l_read_data(void)
 	hmc5883l.Y_axis = i2c_smbus_read_word_data(drv_client, REG_AXIS_Y_MSB);
 	hmc5883l.Z_axis = i2c_smbus_read_word_data(drv_client, REG_AXIS_Z_MSB);
 
-	dev_info(&drv_client->dev, "read data:\n");
-	dev_info(&drv_client->dev, "X_axis: %06d\n", hmc5883l.X_axis);
-	dev_info(&drv_client->dev, "Y_axis: %06d\n", hmc5883l.Y_axis);
-	dev_info(&drv_client->dev, "Z_axis: %06d\n", hmc5883l.Z_axis);
-
 	return 0;
 }
 
-static ssize_t axis_X_show(struct class *class, struct class_attribute *attr, char *buf) {
+static ssize_t read_show(struct class *class, struct class_attribute *attr, char *buf) {
 	hmc5883l_read_data();
 
-	sprintf(buf, "X_axis: %d\n", hmc5883l.X_axis);
-	return strlen(buf);
-}
-
-static ssize_t axis_Y_show(struct class *class, struct class_attribute *attr, char *buf) {
-	hmc5883l_read_data();
-
-	sprintf(buf, "Y_axis: %d\n", hmc5883l.Y_axis);
-	return strlen(buf);
-}
-
-static ssize_t axis_Z_show(struct class *class, struct class_attribute *attr, char *buf) {
-	hmc5883l_read_data();
-
-	sprintf(buf, "Z_axis: %d\n", hmc5883l.Z_axis);
+	sprintf(buf, "X: %6d | Y: %6d | Z: %6d\n", 
+		hmc5883l.X_axis, hmc5883l.Y_axis, hmc5883l.Z_axis);
 	return strlen(buf);
 }
 
@@ -76,9 +58,7 @@ static void set_device_mode(struct i2c_client *drv_client)
 	i2c_smbus_write_byte_data(drv_client, MODE_REG, 	DEFAULT_MODE);
 }
 
-CLASS_ATTR_RO(axis_X);
-CLASS_ATTR_RO(axis_Y);
-CLASS_ATTR_RO(axis_Z);
+CLASS_ATTR_RO(read);
 
 static struct class *attr_class;
 
@@ -86,15 +66,14 @@ static int hmc5883l_probe(struct i2c_client *drv_client, const struct i2c_device
 {
 	int ret = 0;
 	
-	dev_info(&drv_client->dev, "i2c client address is 0x%X\n", drv_client->addr);
-	dev_info(&drv_client->dev, "i2c driver probed\n");
-
 	if(!verify_i2c_device(drv_client))
 		return -ENODEV;
 
 	hmc5883l.client = drv_client;
 	set_device_mode(drv_client);
 	hmc5883l_read_data();
+	dev_info(&drv_client->dev, "read:\nX: %6d | Y: %6d | Z: %6d\n", 
+	hmc5883l.X_axis, hmc5883l.Y_axis, hmc5883l.Z_axis);
 
 	attr_class = class_create(THIS_MODULE, "hmc5883l");
 	if (IS_ERR(attr_class)) {
@@ -103,31 +82,16 @@ static int hmc5883l_probe(struct i2c_client *drv_client, const struct i2c_device
 		goto err1;
 	}
 
-	ret = class_create_file(attr_class, &class_attr_axis_X);
+	ret = class_create_file(attr_class, &class_attr_read);
     if (ret) {
-		dev_info(&drv_client->dev, "HMC5883L: failed to create sysfs class attribute axis_X: %d\n", ret);
+		dev_info(&drv_client->dev, "HMC5883L: failed to create sysfs class attribute read: %d\n", ret);
         goto err2;
 	}
 
-    ret = class_create_file(attr_class, &class_attr_axis_Y);
-	if (ret) {
-		dev_info(&drv_client->dev, "HMC5883L: failed to create sysfs class attribute axis_Y: %d\n", ret);
-        goto err3;
-	}
+	dev_info(&drv_client->dev, "HMC5883L: driver probed.\n");
 
-    ret = class_create_file(attr_class, &class_attr_axis_Z);
-	if (ret) {
-		dev_info(&drv_client->dev, "HMC5883L: failed to create sysfs class attribute axis_Z: %d\n", ret);
-        goto err4;
-	}
-
-	dev_info(&drv_client->dev, "HMC5883L: driver initialized.\n");
 	return 0;
 
-err4:   
-	class_remove_file(attr_class, &class_attr_axis_Y);
-err3:   
-	class_remove_file(attr_class, &class_attr_axis_X);
 err2:	
 	class_destroy(attr_class);
 err1:   
@@ -140,9 +104,7 @@ static int hmc5883l_remove(struct i2c_client *drv_client)
 {
 	hmc5883l.client = 0;
     if (attr_class) {
-		class_remove_file(attr_class, &class_attr_axis_Z);
-		class_remove_file(attr_class, &class_attr_axis_Y);
-		class_remove_file(attr_class, &class_attr_axis_X);
+		class_remove_file(attr_class, &class_attr_read);
 		dev_info(&drv_client->dev, "sysfs class attributes removed\n");
 
 		class_destroy(attr_class);
